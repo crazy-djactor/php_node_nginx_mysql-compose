@@ -1,88 +1,150 @@
-# CoreUI Free Laravel Bootstrap Admin Template
+## Installation as docker container
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+1) The components are 3 docker containers, 
+ - app is based on php image and node will be installed here
+ - mysql will be serving through custom port 3307 
+ - nginx will be serving through custom port 81
 
-[![Bootstrap Admin Template](https://coreui.io/images/github/vue-free-template-3.gif)](https://coreui.io/laravel/)
+2) Containers
+ - Install composer and node on the image and run composer install and npm install & run dev for building production files
+   
+```angular2html
+FROM php:7.4-fpm
 
-Curious why I decided to create CoreUI? Please read this article: [Jack of all trades, master of none. Why Bootstrap Admin Templates suck.](https://medium.com/@lukaszholeczek/jack-of-all-trades-master-of-none-5ea53ef8a1f#.7eqx1bcd8)
+# Copy composer.lock and composer.json
+COPY composer.lock composer.json /var/www/
 
-CoreUI offers 6 versions: [Bootstrap](https://github.com/coreui/coreui-free-bootstrap-admin-template), [Angular](https://github.com/coreui/coreui-free-angular-admin-template), [Laravel](https://github.com/coreui/coreui-free-laravel-admin-template), [React.js](https://github.com/coreui/coreui-free-react-admin-template), [Vue.js](https://github.com/coreui/coreui-free-vue-admin-template), and [Vue.js + Laravel](https://github.com/coreui/coreui-free-vue-laravel-admin-template).
+# Set working directory
+WORKDIR /var/www
 
-CoreUI is meant to be the UX game changer. Pure & transparent code is devoid of redundant components, so the app is light enough to offer ultimate user experience. This means mobile devices also, where the navigation is just as easy and intuitive as on a desktop or laptop. The CoreUI Layout API lets you customize your project for almost any device – be it Mobile, Web or WebApp – CoreUI covers them all!
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libpng-dev \
+    libjpeg62-turbo-dev \
+    libfreetype6-dev \
+    locales \
+    libonig-dev \
+    libzip-dev \
+    zip \
+    jpegoptim optipng pngquant gifsicle \
+    vim \
+    unzip \
+    git \
+    curl
 
-## Table of Contents
+# Clear cache
+RUN apt-get clean && rm -rf /var/lib/apt/lists/*
 
-* [Installation](#installation)
-* [Usage](#Usage)
-* [Features](#Features)
-* [Creators](#creators)
-* [Community](#community)
-* [Community Projects](#community-projects)
-* [License](#license)
-* [Support CoreUI Development](#support-coreui-development)
+# Install extensions
+RUN docker-php-ext-install pdo_mysql mbstring zip exif pcntl
+#RUN docker-php-ext-configure gd --with-gd --with-freetype-dir=/usr/include/ --with-jpeg-dir=/usr/include/ --with-png-dir=/usr/include/
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg
+RUN docker-php-ext-install gd
 
-## Installation
+# Install composer
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+# Install node12
+RUN rm -rf /var/lib/apt/lists/ && curl -sL https://deb.nodesource.com/setup_12.x | bash -
+RUN apt-get install nodejs -y
+
+# Add user for laravel application
+RUN groupadd -g 1000 www
+RUN useradd -u 1000 -ms /bin/bash -g www www
+
+
+# Copy existing application directory contents
+COPY . /var/www
+RUN cd /var/www
+
+RUN composer install
+RUN npm install
+RUN npm run dev
+
+# Copy existing application directory permissions
+COPY --chown=www:www . /var/www
+RUN chown -R www:www /var/www
+
+# Change current user to www
+USER www
+
+# Expose port 9000 and start php-fpm server
+EXPOSE 9000
+CMD ["php-fpm"]
+```
+ - Set config of nginx in /deploy/nginx/conf.d
+ - Set mysql config in /deploy/mysql
 
 ``` bash
 
-# go into app's directory
-$ cd my-project
+version: '3'
+services:
 
-# install app's dependencies
-$ composer install
+  #PHP Service
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: digitalocean.com/php
+    container_name: app
+    restart: unless-stopped
+    tty: true
+    environment:
+      SERVICE_NAME: app
+      SERVICE_TAGS: dev
+    working_dir: /var/www
+    volumes:
+      - ./:/var/www
+      - ./deploy/php/local.ini:/usr/local/etc/php/conf.d/local.ini
+    networks:
+      - app-network
 
-# install app's dependencies
-$ npm install
+  #Nginx Service
+  webserver:
+    image: nginx:alpine
+    container_name: webserver
+    restart: unless-stopped
+    tty: true
+    ports:
+      - "81:81"
+      - "444:444"
+    volumes:
+      - ./:/var/www
+      - ./deploy/nginx/conf.d/:/etc/nginx/conf.d/
+    networks:
+      - app-network
 
+  #MySQL Service
+  db:
+    image: mysql:5.7.22
+    container_name: db
+    restart: unless-stopped
+    tty: true
+    ports:
+      - "3307:3307"
+    environment:
+      MYSQL_DATABASE: db
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_TCP_PORT: 3307
+      SERVICE_TAGS: dev
+      SERVICE_NAME: mysql   
+    volumes:
+      - ./deploy/mysql/my.cnf:/etc/mysql/my.cnf
+    networks:
+      - app-network
+
+#Docker Networks
+networks:
+  app-network:
+    driver: bridge
+#Volumes
+volumes:
+  dbdata:
+    driver: local
 ```
 
-### If you choice to use MySQL
+3. Running step
+   docker-compose exec app php artisan key:generate
+   docker-compose exec app php artisan config:cache
+   docker-compose exec app php artisan migrate
 
-Copy file ".env.example", and change its name to ".env".
-Then in file ".env" complete this database configuration:
-* DB_CONNECTION=mysql
-* DB_HOST=127.0.0.1
-* DB_PORT=3306
-* DB_DATABASE=laravel
-* DB_USERNAME=root
-* DB_PASSWORD=
-
-### Set APP_URL
-
-> If your project url looks like: example.com/sub-folder 
-Then go to `my-project/.env`
-And modify this line:
-
-* APP_URL = 
-
-To make it look like this:
-
-* APP_URL = http://example.com/sub-folder
-
-
-### Next step
-
-``` bash
-# in your app directory
-# generate laravel APP_KEY
-$ php artisan key:generate
-
-# run database migration and seed
-$ php artisan migrate:refresh --seed
-
-# generate mixing
-$ npm run dev
-
-# and repeat generate mixing
-$ npm run dev
-```
-
-## Usage
-
-``` bash
-# start local server
-$ php artisan serve
-
-# test
-$ php vendor/bin/phpunit
-```
